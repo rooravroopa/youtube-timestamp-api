@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
 import os
-import re
+import time
+from google import genai
+from google.genai import types
 
 app = FastAPI()
 
@@ -21,66 +23,66 @@ class AskRequest(BaseModel):
     topic: str
 
 
-def hhmmss_from_vtt_time(t):
-    parts = t.split(":")
-    if len(parts) == 3:
-        return t.split(".")[0]
-    return "00:00:00"
-
-
 @app.post("/ask")
 def ask(request: AskRequest):
 
+    audio_file = "audio.m4a"
+
     try:
-        # Download subtitles only
+        # 🔹 Download audio only
         subprocess.run(
             [
                 "yt-dlp",
-                "--skip-download",
-                "--write-auto-sub",
-                "--sub-lang",
-                "en",
-                "--sub-format",
-                "vtt",
+                "-f",
+                "bestaudio",
+                "-o",
+                audio_file,
                 request.video_url,
             ],
             check=True,
         )
 
-        # Find downloaded .vtt file
-        vtt_file = None
-        for file in os.listdir():
-            if file.endswith(".en.vtt"):
-                vtt_file = file
-                break
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
-        if not vtt_file:
-            return {
-                "timestamp": "00:00:00",
-                "video_url": request.video_url,
-                "topic": request.topic,
-            }
+        # 🔹 Upload file to Gemini
+        uploaded = client.files.upload(file=audio_file)
 
-        topic_lower = request.topic.lower()
+        # 🔹 Wait until ACTIVE
+        while uploaded.state.name != "ACTIVE":
+            time.sleep(2)
+            uploaded = client.files.get(name=uploaded.name)
 
-        with open(vtt_file, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        # 🔹 Ask Gemini for timestamp
+        prompt = f"""
+Listen to this audio and find the FIRST time the following topic is mentioned:
 
-        for i in range(len(lines)):
-            if "-->" in lines[i]:
-                timestamp_line = lines[i].strip()
-                text_line = lines[i + 1].strip().lower() if i + 1 < len(lines) else ""
+"{request.topic}"
 
-                if topic_lower in text_line:
-                    start_time = timestamp_line.split(" --> ")[0]
-                    return {
-                        "timestamp": hhmmss_from_vtt_time(start_time),
-                        "video_url": request.video_url,
-                        "topic": request.topic,
-                    }
+Return ONLY the timestamp in HH:MM:SS format.
+Do NOT return anything else.
+"""
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[uploaded, prompt],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "timestamp": types.Schema(
+                            type=types.Type.STRING
+                        )
+                    },
+                    required=["timestamp"],
+                ),
+            ),
+        )
+
+        result = response.parsed
 
         return {
-            "timestamp": "00:00:00",
+            "timestamp": result["timestamp"],
             "video_url": request.video_url,
             "topic": request.topic,
         }
@@ -91,6 +93,10 @@ def ask(request: AskRequest):
             "video_url": request.video_url,
             "topic": request.topic,
         }
+
+    finally:
+        if os.path.exists(audio_file):
+            os.remove(audio_file)
 
 
 @app.get("/")
