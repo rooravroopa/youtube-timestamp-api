@@ -53,8 +53,13 @@ def ask(request: AskRequest):
                 "video_url": request.video_url,
                 "topic": request.topic,
             }
-
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        
+        transcript = None
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+            except:
+                transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+                transcript = transcripts.find_transcript(['en']).fetch()
 
         topic_lower = request.topic.lower()
 
