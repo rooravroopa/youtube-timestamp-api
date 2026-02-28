@@ -6,18 +6,10 @@ from urllib.parse import urlparse, parse_qs
 app = FastAPI()
 
 
-# ---------------------------
-# Request / Response Models
-# ---------------------------
-
 class AskRequest(BaseModel):
     video_url: str
     topic: str
 
-
-# ---------------------------
-# Helper Functions
-# ---------------------------
 
 def extract_video_id(url: str):
     try:
@@ -37,10 +29,6 @@ def seconds_to_hhmmss(seconds: float):
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
-# ---------------------------
-# Main Endpoint
-# ---------------------------
-
 @app.post("/ask")
 def ask(request: AskRequest):
 
@@ -53,13 +41,13 @@ def ask(request: AskRequest):
                 "video_url": request.video_url,
                 "topic": request.topic,
             }
-        
-        transcript = None
+
+        # 🔥 Robust transcript fetching
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-            except:
-                transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-                transcript = transcripts.find_transcript(['en']).fetch()
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
+        except Exception:
+            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcripts.find_transcript(["en"]).fetch()
 
         topic_lower = request.topic.lower()
 
@@ -71,7 +59,6 @@ def ask(request: AskRequest):
                     "topic": request.topic,
                 }
 
-        # Topic not found
         return {
             "timestamp": "00:00:00",
             "video_url": request.video_url,
@@ -79,17 +66,13 @@ def ask(request: AskRequest):
         }
 
     except Exception:
-        # 🔥 NEVER CRASH — always return valid response
+        # Never crash
         return {
             "timestamp": "00:00:00",
             "video_url": request.video_url,
             "topic": request.topic,
         }
 
-
-# ---------------------------
-# Health Check Endpoint
-# ---------------------------
 
 @app.get("/")
 def root():
