@@ -57,6 +57,6 @@ def ask(request: AskRequest):
         "video_url": request.video_url,
         "topic": request.topic,
     }
-    @app.get("/")
+@app.get("/")
 def root():
     return {"status": "running"}
