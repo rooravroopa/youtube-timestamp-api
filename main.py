@@ -1,7 +1,8 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
+import requests
+import xml.etree.ElementTree as ET
 
 app = FastAPI()
 
@@ -12,17 +13,14 @@ class AskRequest(BaseModel):
 
 
 def extract_video_id(url: str):
-    try:
-        if "youtu.be" in url:
-            return url.split("/")[-1]
-        parsed = urlparse(url)
-        return parse_qs(parsed.query).get("v", [None])[0]
-    except Exception:
-        return None
+    if "youtu.be" in url:
+        return url.split("/")[-1]
+    parsed = urlparse(url)
+    return parse_qs(parsed.query).get("v", [None])[0]
 
 
 def seconds_to_hhmmss(seconds: float):
-    seconds = int(seconds)
+    seconds = int(float(seconds))
     h = seconds // 3600
     m = (seconds % 3600) // 60
     s = seconds % 60
@@ -31,10 +29,8 @@ def seconds_to_hhmmss(seconds: float):
 
 @app.post("/ask")
 def ask(request: AskRequest):
-
     try:
         video_id = extract_video_id(request.video_url)
-
         if not video_id:
             return {
                 "timestamp": "00:00:00",
@@ -42,19 +38,25 @@ def ask(request: AskRequest):
                 "topic": request.topic,
             }
 
-        # 🔥 Robust transcript fetching
-        try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["en"])
-        except Exception:
-            transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = transcripts.find_transcript(["en"]).fetch()
+        # 🔥 Direct YouTube caption fetch
+        caption_url = f"https://video.google.com/timedtext?lang=en&v={video_id}"
+        response = requests.get(caption_url, timeout=10)
 
+        if response.status_code != 200 or not response.text.strip():
+            return {
+                "timestamp": "00:00:00",
+                "video_url": request.video_url,
+                "topic": request.topic,
+            }
+
+        root = ET.fromstring(response.text)
         topic_lower = request.topic.lower()
 
-        for entry in transcript:
-            if topic_lower in entry["text"].lower():
+        for child in root.findall("text"):
+            text = child.text or ""
+            if topic_lower in text.lower():
                 return {
-                    "timestamp": seconds_to_hhmmss(entry["start"]),
+                    "timestamp": seconds_to_hhmmss(child.attrib.get("start", 0)),
                     "video_url": request.video_url,
                     "topic": request.topic,
                 }
@@ -66,7 +68,6 @@ def ask(request: AskRequest):
         }
 
     except Exception:
-        # Never crash
         return {
             "timestamp": "00:00:00",
             "video_url": request.video_url,
